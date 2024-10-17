@@ -3,10 +3,39 @@
 #include <cctype>
 #include <string>
 #include <vector>
+#include <fstream>
 
 using namespace std;
 
-// Token Types
+// Define assembly instruction templates
+const string ASM_HEADER = ".386\n.model flat, stdcall\noption casemap :none\n\n"
+                          "include \\masm32\\include\\kernel32.inc\n"
+                          "include \\masm32\\include\\masm32.inc\n"
+                          "includelib \\masm32\\lib\\kernel32.lib\n"
+                          "includelib \\masm32\\lib\\masm32.lib\n\n"
+                          ".data\n";
+const string ASM_CODE_START = ".code\nmain:\n";
+const string ASM_CODE_END = "    invoke ExitProcess, 0\nend main\n";
+
+// Assembly Instructions Structure
+struct AssemblyInstruction {
+    string instruction;
+    string operand;  // For constants or identifiers
+};
+
+vector<AssemblyInstruction> assembly_code;
+vector<string> data_section;
+
+// Code Generator for Assembly
+void generate_asm_code(const string &instruction, const string &operand = "") {
+    assembly_code.push_back({instruction, operand});
+}
+
+void generate_data_section(const string &label, const string &data) {
+    data_section.push_back(label + " db \"" + data + "\", 0");
+}
+
+// Lexer functions
 typedef enum {
     CLASS,
     FUNCTION,
@@ -17,16 +46,14 @@ typedef enum {
     OPEN_PAREN,
     CLOSE_PAREN,
     SEMI,
-    PRINT
+    PRINT_TOKEN
 } TokenType;
 
-// Token Structure
 struct Token {
     TokenType type;
     string value;
 };
 
-// Lexer functions
 bool is_separator(char c) {
     return c == '{' || c == '}' || c == '(' || c == ')' || c == ';';
 }
@@ -43,7 +70,7 @@ void print_token(const Token& token) {
         case OPEN_PAREN: cout << "OPEN_PAREN"; break;
         case CLOSE_PAREN: cout << "CLOSE_PAREN"; break;
         case SEMI: cout << "SEMI"; break;
-        case PRINT: cout << "PRINT"; break;
+        case PRINT_TOKEN: cout << "PRINT"; break;
         default: cout << "UNKNOWN"; break;
     }
     cout << ")\n";
@@ -81,7 +108,7 @@ void Lexer(FILE *file, vector<Token> &tokens) {
             } else if (word == "function") {
                 tokens.push_back({FUNCTION, word});
             } else if (word == "print") {
-                tokens.push_back({PRINT, word});
+                tokens.push_back({PRINT_TOKEN, word});
             } else {
                 tokens.push_back({IDENTIFIER, word});
             }
@@ -106,44 +133,34 @@ void Lexer(FILE *file, vector<Token> &tokens) {
 void Parser(vector<Token> &tokens) {
     int pos = 0;
     if (tokens[pos].type == CLASS) {
-        cout << "Parsing CLASS: " << tokens[pos].value << "\n";
         pos++;
         if (tokens[pos].type == IDENTIFIER && tokens[pos].value == "Main") {
-            cout << "Parsing CLASS IDENTIFIER: " << tokens[pos].value << "\n";
             pos++;
             if (tokens[pos].type == OPEN_CURLY) {
-                cout << "Parsing OPEN_CURLY: " << tokens[pos].value << "\n";
                 pos++;
                 if (tokens[pos].type == FUNCTION) {
-                    cout << "Parsing FUNCTION: " << tokens[pos].value << "\n";
                     pos++;
                     if (tokens[pos].type == IDENTIFIER && tokens[pos].value == "Main") {
-                        cout << "Parsing FUNCTION IDENTIFIER: " << tokens[pos].value << "\n";
                         pos++;
                         if (tokens[pos].type == OPEN_PAREN) {
-                            cout << "Parsing OPEN_PAREN: " << tokens[pos].value << "\n";
                             pos++;
                             if (tokens[pos].type == CLOSE_PAREN) {
-                                cout << "Parsing CLOSE_PAREN: " << tokens[pos].value << "\n";
                                 pos++;
                                 if (tokens[pos].type == OPEN_CURLY) {
-                                    cout << "Parsing OPEN_CURLY: " << tokens[pos].value << "\n";
                                     pos++;
-                                    if (tokens[pos].type == PRINT) {
-                                        cout << "Parsing PRINT: " << tokens[pos].value << "\n";
+                                    while (tokens[pos].type == PRINT_TOKEN) {
                                         pos++;
                                         if (tokens[pos].type == OPEN_PAREN) {
-                                            cout << "Parsing OPEN_PAREN: " << tokens[pos].value << "\n";
                                             pos++;
                                             if (tokens[pos].type == STRING_LITERAL) {
-                                                cout << "Parsing STRING_LITERAL: " << tokens[pos].value << "\n";
+                                                string label = "message" + to_string(pos);
+                                                generate_data_section(label, tokens[pos].value);
+                                                generate_asm_code("invoke StdOut, addr " + label);
                                                 pos++;
                                                 if (tokens[pos].type == CLOSE_PAREN) {
-                                                    cout << "Parsing CLOSE_PAREN: " << tokens[pos].value << "\n";
                                                     pos++;
                                                     if (tokens[pos].type == SEMI) {
-                                                        cout << "Parsing SEMI: " << tokens[pos].value << "\n";
-                                                        cout << "Valid print statement\n";
+                                                        pos++;
                                                     } else {
                                                         cout << "Error: Expected ';'\n";
                                                     }
@@ -158,7 +175,7 @@ void Parser(vector<Token> &tokens) {
                                         }
                                     }
                                     if (tokens[pos].type == CLOSE_CURLY) {
-                                        cout << "Parsing CLOSE_CURLY: " << tokens[pos].value << "\n";
+                                        pos++;
                                     } else {
                                         cout << "Error: Expected '}'\n";
                                     }
@@ -168,7 +185,7 @@ void Parser(vector<Token> &tokens) {
                     }
                 }
                 if (tokens[pos].type == CLOSE_CURLY) {
-                    cout << "Parsing CLOSE_CURLY: " << tokens[pos].value << "\n";
+                    pos++;
                 } else {
                     cout << "Error: Expected '}'\n";
                 }
@@ -177,9 +194,37 @@ void Parser(vector<Token> &tokens) {
     }
 }
 
+// Function to save the assembly code to a file
+void save_asm_to_file(const string &filename) {
+    ofstream outfile(filename);
+    if (!outfile) {
+        cerr << "Error: Could not open file for writing!\n";
+        return;
+    }
+
+    outfile << ASM_HEADER;
+
+    for (const auto &data : data_section) {
+        outfile << "    " << data << "\n";
+    }
+
+    outfile << "\n" << ASM_CODE_START;
+
+    for (const auto &instruction : assembly_code) {
+        outfile << "    " << instruction.instruction;
+        if (!instruction.operand.empty()) {
+            outfile << ", " << instruction.operand;
+        }
+        outfile << "\n";
+    }
+
+    outfile << ASM_CODE_END;
+    outfile.close();
+    cout << "Assembly code saved to " << filename << "\n";
+}
+
 int main() {
-    FILE *file;
-    file = fopen("main.eld", "r");
+    FILE *file = fopen("main.eld", "r");
     if (!file) {
         cerr << "Error opening file!\n";
         return 1;
@@ -193,6 +238,9 @@ int main() {
     }
 
     Parser(tokens);
+
+    // Save the generated assembly code
+    save_asm_to_file("output.asm");
 
     return 0;
 }
